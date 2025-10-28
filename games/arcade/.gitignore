@@ -1,0 +1,73 @@
+# --- OS cruft ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+Icon?
+$RECYCLE.BIN/
+
+# --- Logs & temp ---
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+tmp/
+temp/
+*.swp
+*.swo
+
+# --- Environment secrets (keep an example file instead) ---
+.env
+.env.*
+!.env.example
+
+# --- Node/tooling (optional future use) ---
+node_modules/
+.cache/
+.parcel-cache/
+dist/
+build/
+.out/
+.tmp/
+
+# --- Framework builds (just in case) ---
+.next/
+.nuxt/
+.svelte-kit/
+public/build/
+
+# --- Testing artifacts ---
+coverage/
+.cypress/
+playwright-report/
+test-results/
+
+# --- Serverless / hosting ---
+.netlify/
+.netlify/functions-serve/
+.vercel/
+.serverless/
+.aws-sam/
+
+# If you add Netlify Functions, ignore nested node_modules per function
+functions/**/node_modules/
+
+# --- Editors/IDEs ---
+.vscode/
+.idea/
+*.iml
+
+# --- DBs or local state you might experiment with ---
+*.sqlite
+*.db
+*.db-shm
+*.db-wal
+
+# --- Archives you don't want to accidentally commit ---
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# --- Keep web assets & builds you actually need for GitHub Pages ---
+# (No rules here intentionally — your /games, /site, /docs, images, wasm, etc. will be tracked)
