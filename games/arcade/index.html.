@@ -1,0 +1,408 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Explorers Arcade — Levels + Hazards</title>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.min.js"></script>
+  <style>
+    html,body{height:100%;margin:0;background:#0e0f12}
+    #game{width:100%;height:100%}
+    .hint{position:fixed;left:12px;bottom:12px;color:#fff;font:12px/1.3 system-ui,Arial;opacity:.7}
+  </style>
+</head>
+<body>
+<div id="game"></div>
+<div class="hint">Keys: ◀▶ move, ▲/Space jump • R restart • M menu</div>
+<script>
+/* =====================  TILE LEGEND (ASCII maps)  ==================
+. empty     # platform/ground      S player start
+c coin      e enemy (patrol)       X exit door
+K checkpoint (respawn)             M moving platform (horiz)
+^ spikes (deadly)                  ~ lava (deadly)
+Each char = 32x32 px tile
+=================================================================== */
+const TILE = 32, W = 800, H = 600;
+
+/* ---------- Edit your levels here (keep all rows same width) ------- */
+const LEVELS = [
+{ name:'Level 1', rows:[
+"................................................................",
+"................................................................",
+"...........................................c....................",
+"...............................###..............................",
+".........................c....................................X#",
+"..................###..........................................#",
+"..........c....................................................#",
+".....###.......................................................#",
+"S..............................................................#",
+"...............................................................#",
+"################################################################"
+]},
+{ name:'Level 2', rows:[
+"................................................................",
+"...............................................c................",
+".............................###................................",
+"....................c...........................................X",
+"..............###...............................................#",
+".....K..........................................................#",
+"S...........#####......e.......................c................#",
+"..................#####...............................M.........#",
+".............................................#####..............#",
+"...............................................................^#",
+"###############################################################~#"
+]},
+{ name:'Level 3', rows:[
+"................................................................",
+"................c...............e....................c.........X",
+"...........#####................................................#",
+".........................................#####..................#",
+".....K..........................................................#",
+"S..................e..................K.........................#",
+"...............#####............................................#",
+"..............M.....................................#####.......#",
+".........................^^^^^^.................................#",
+"..................~~~~~~~~~~~~~~~...............................#",
+"################################################################"
+]}];
+
+const PROG_KEY = 'explorers_arcade_progress_v2';
+function getProgress(){
+  try{ return JSON.parse(localStorage.getItem(PROG_KEY) || '{"unlocked":1,"best":{}}'); }
+  catch{ return {unlocked:1,best:{}}; }
+}
+function setProgress(p){ localStorage.setItem(PROG_KEY, JSON.stringify(p)); }
+
+/* =====================  PHASER BOOT  ============================= */
+const config = {
+  type: Phaser.AUTO, parent:'game', width:W, height:H,
+  physics:{ default:'arcade', arcade:{ gravity:{y:900}, debug:false }},
+  scene:[BootScene, MenuScene, GameScene]
+};
+new Phaser.Game(config);
+
+function BootScene(){ Phaser.Scene.call(this,{key:'Boot'}); }
+BootScene.prototype = Object.create(Phaser.Scene.prototype);
+BootScene.prototype.constructor = BootScene;
+BootScene.prototype.preload = function(){
+  const g = this.add.graphics();
+
+  // solid tile
+  g.fillStyle(0x8aa0a8,1).fillRect(0,0,32,32);
+  g.lineStyle(2,0x6f8790,1).strokeRect(0,0,32,32);
+  g.generateTexture('tile',32,32); g.clear();
+
+  // moving platform tile
+  g.fillStyle(0x9bb6bf,1).fillRect(0,0,32,12);
+  g.generateTexture('mplat',32,12); g.clear();
+
+  // player
+  g.fillStyle(0x4caf50,1).fillRect(0,0,28,36);
+  g.generateTexture('player',28,36); g.clear();
+
+  // coin
+  g.fillStyle(0xffd54f,1).fillCircle(10,10,10);
+  g.lineStyle(2,0xb28900,1).strokeCircle(10,10,10);
+  g.generateTexture('coin',20,20); g.clear();
+
+  // enemy
+  g.fillStyle(0xe53935,1).fillRect(0,0,28,22);
+  g.generateTexture('enemy',28,22); g.clear();
+
+  // door locked/open
+  g.fillStyle(0x546e7a,1).fillRect(0,0,28,44);
+  g.fillStyle(0x263238,1).fillRect(11,16,6,20);
+  g.generateTexture('doorLocked',28,44); g.clear();
+  g.fillStyle(0x00bcd4,1).fillRect(0,0,28,44);
+  g.fillStyle(0xffffff,1).fillRect(11,16,6,20);
+  g.generateTexture('doorOpen',28,44); g.clear();
+
+  // checkpoint flags
+  g.fillStyle(0x1e88e5,1).fillRect(0,0,8,30);
+  g.fillStyle(0x42a5f5,1).fillTriangle(8,0, 24,6, 8,12);
+  g.generateTexture('flagOff',24,30); g.clear();
+  g.fillStyle(0x00c853,1).fillRect(0,0,8,30);
+  g.fillStyle(0x69f0ae,1).fillTriangle(8,0, 24,6, 8,12);
+  g.generateTexture('flagOn',24,30); g.clear();
+
+  // spikes
+  g.fillStyle(0xd32f2f,1);
+  g.beginPath();
+  for(let i=0;i<4;i++){ g.moveTo(i*8,16); g.lineTo(i*8+4,0); g.lineTo(i*8+8,16); }
+  g.closePath(); g.fillPath();
+  g.generateTexture('spikes',32,16); g.clear();
+
+  // lava
+  g.fillStyle(0xff5722,1).fillRect(0,0,32,16);
+  g.fillStyle(0xff8a50,1).fillCircle(6,8,4).fillCircle(18,10,4).fillCircle(28,7,4);
+  g.generateTexture('lava',32,16); g.clear();
+};
+BootScene.prototype.create = function(){ this.scene.start('Menu'); };
+
+/* =====================  MENU (with thumbnails + best times) ====== */
+function MenuScene(){ Phaser.Scene.call(this,{key:'Menu'}); }
+MenuScene.prototype = Object.create(Phaser.Scene.prototype);
+MenuScene.prototype.constructor = MenuScene;
+
+MenuScene.prototype.create = function(){
+  const p = getProgress();
+  this.add.rectangle(W/2,H/2,W,H,0x12141a).setOrigin(0.5);
+  this.add.text(W/2, 56, 'Explorers Arcade', {font:'28px system-ui', fill:'#fff'}).setOrigin(0.5);
+  this.add.text(W/2, 92, 'Levels • Checkpoints • Hazards • Best Times', {font:'14px system-ui', fill:'#9aa'}).setOrigin(0.5);
+
+  const cols=3, cardW=230, cardH=160, pad=20;
+
+  LEVELS.forEach((L,i)=>{
+    const unlocked = i < (p.unlocked||1);
+    const cx = W/2 - (cols-1)*(cardW+pad)/2 + (i%cols)*(cardW+pad);
+    const cy = 170 + Math.floor(i/cols)*(cardH+pad);
+
+    const card = this.add.rectangle(cx, cy, cardW, cardH, unlocked?0x1d2430:0x101317, 1)
+                  .setStrokeStyle(2, 0x2e3a48).setOrigin(0.5);
+
+    // Thumbnail canvas using graphics
+    const thumb = this.add.graphics({x:cx-cardW/2+10, y:cy-cardH/2+40});
+    drawThumbnail(thumb, LEVELS[i].rows);
+
+    this.add.text(cx, cy-46, L.name, {font:'18px system-ui', fill: unlocked?'#fff':'#556'}).setOrigin(0.5);
+
+    const best = (p.best||{})[i];
+    const bestText = unlocked
+      ? (best ? `Best: ${formatMs(best)} • Click to play` : 'Click to play')
+      : 'Locked';
+    this.add.text(cx, cy+52, bestText, {font:'13px system-ui', fill: unlocked?'#9cd':'#444'}).setOrigin(0.5);
+
+    if(unlocked){
+      card.setInteractive({useHandCursor:true}).on('pointerup',()=> this.scene.start('Game',{levelIndex:i}));
+    }
+  });
+
+  const btn = this.add.text(W/2, H-70, 'Reset Progress', {font:'14px system-ui', fill:'#9aa', backgroundColor:'#1d2430', padding:{x:10,y:6}})
+    .setOrigin(0.5).setInteractive({useHandCursor:true}).on('pointerup',()=>{ setProgress({unlocked:1,best:{}}); this.scene.restart(); });
+};
+
+function drawThumbnail(g, rows){
+  // 12x7 mini grid
+  const scale = 8; // 8px per tile in thumb
+  const maxW = 12, maxH = 7;
+  const srcW = rows[0].length, srcH = rows.length;
+  // sample middle window
+  let startX = Math.max(0, Math.floor((srcW-maxW)/2));
+  let startY = Math.max(0, Math.floor((srcH-maxH)/2));
+
+  g.fillStyle(0x0f1318,1).fillRect(0,0,maxW*scale,maxH*scale);
+
+  for(let r=0;r<maxH;r++){
+    for(let c=0;c<maxW;c++){
+      const ch = rows[startY+r][startX+c] || '.';
+      const x=c*scale, y=r*scale;
+      if(ch==='#') g.fillStyle(0x607d8b,1).fillRect(x,y,scale,scale);
+      else if(ch==='c') g.fillStyle(0xffd54f,1).fillRect(x+2,y+2,scale-4,scale-4);
+      else if(ch==='e') g.fillStyle(0xe57373,1).fillRect(x+1,y+3,scale-2,scale-6);
+      else if(ch==='S') g.fillStyle(0x66bb6a,1).fillRect(x+1,y+1,scale-2,scale-2);
+      else if(ch==='X') g.fillStyle(0x00bcd4,1).fillRect(x+1,y+1,scale-2,scale-2);
+      else if(ch==='K') g.fillStyle(0x64b5f6,1).fillRect(x+1,y+1,scale-2,scale-2);
+      else if(ch==='^') g.fillStyle(0xef5350,1).fillRect(x,y+scale-2,scale,2);
+      else if(ch==='~') g.fillStyle(0xff8a50,1).fillRect(x,y+scale-2,scale,2);
+      else if(ch==='M') g.fillStyle(0x90caf9,1).fillRect(x,y+scale-3,scale,3);
+    }
+  }
+}
+
+/* =====================  GAME SCENE  ============================== */
+function GameScene(){ Phaser.Scene.call(this,{key:'Game'}); }
+GameScene.prototype = Object.create(Phaser.Scene.prototype);
+GameScene.prototype.constructor = GameScene;
+GameScene.prototype.init = function(data){ this.levelIndex=data.levelIndex||0; };
+GameScene.prototype.create = function(){
+  this.cameras.main.setBackgroundColor(0x0f1216);
+  this.input.keyboard.on('keydown-M', ()=> this.scene.start('Menu'));
+  this.input.keyboard.on('keydown-R', ()=> this.createLevel(this.levelIndex));
+  this.createLevel(this.levelIndex);
+};
+
+GameScene.prototype.createLevel = function(idx){
+  // cleanup
+  this.physics.world.colliders.destroy();
+  this.children.removeAll(true);
+  this.timeStart = performance.now();
+
+  this.add.text(12,10,`${LEVELS[idx].name} (${idx+1}/${LEVELS.length})`,
+    {font:'16px system-ui', fill:'#fff'}).setScrollFactor(0);
+  this.timerText = this.add.text(W-12,10,'00:00.000',
+    {font:'16px system-ui', fill:'#fff'}).setOrigin(1,0).setScrollFactor(0);
+  this.info = this.add.text(W/2,H-28,'Collect all coins to open the door.',
+    {font:'14px system-ui', fill:'#cbd5e1'}).setOrigin(0.5,0).setScrollFactor(0);
+
+  const rows = LEVELS[idx].rows;
+  const Wd = rows[0].length, Ht = rows.length;
+
+  // groups
+  const solids = this.physics.add.staticGroup();
+  const coins = this.physics.add.group();
+  const enemies = this.physics.add.group();
+  const checkpoints = this.physics.add.staticGroup();
+  const spikes = this.physics.add.staticGroup();
+  const lava = this.physics.add.staticGroup();
+  const movers = this.physics.add.group({ allowGravity:false, immovable:true });
+
+  let start = {x:TILE*1.5,y:TILE*1.5}, doorSprite, spawn=null;
+
+  // build map
+  rows.forEach((row, r)=>{
+    for(let c=0;c<Wd;c++){
+      const ch=row[c], x=c*TILE+TILE/2, y=r*TILE+TILE/2;
+      if(ch==='#'){ const t=solids.create(x,y,'tile'); t.refreshBody(); }
+      else if(ch==='S'){ start={x,y}; }
+      else if(ch==='c'){ const coin=coins.create(x,y-6,'coin'); coin.body.setAllowGravity(false); }
+      else if(ch==='e'){ const en=enemies.create(x,y-10,'enemy'); en.setCollideWorldBounds(true); en.baseY=y-10; }
+      else if(ch==='X'){ doorSprite = this.physics.add.staticSprite(x,y-10,'doorLocked'); }
+      else if(ch==='K'){ checkpoints.create(x,y-12,'flagOff'); }
+      else if(ch==='^'){ const s=spikes.create(x,y-8,'spikes'); s.refreshBody(); }
+      else if(ch==='~'){ const l=lava.create(x,y-8,'lava'); l.refreshBody(); }
+      else if(ch==='M'){ // moving platform (horiz) centered on x with 3 tiles width
+        const mp = movers.create(x,y,'mplat'); mp.displayWidth=96; mp.setSize(96,12).setOffset(0,0);
+        // store patrol bounds (±80 px)
+        mp.data = {min:x-80, max:x+80, vx:80*(Math.random()<.5?-1:1)};
+        mp.setVelocityX(mp.data.vx);
+      }
+    }
+  });
+
+  // enemies patrol
+  enemies.children.iterate(en=> en.setVelocityX(100*(Math.random()<.5?-1:1)));
+
+  // player
+  this.player = this.physics.add.sprite(start.x,start.y,'player').setCollideWorldBounds(true);
+  this.player.body.setSize(22,34).setOffset(3,2);
+  this.spawnPoint = {x:start.x, y:start.y};
+
+  // controls
+  this.cursors = this.input.keyboard.createCursorKeys();
+
+  // collisions
+  this.physics.add.collider(this.player, solids);
+  this.physics.add.collider(enemies, solids);
+  this.physics.add.collider(coins, solids);
+
+  // moving platforms collide + carry player
+  this.physics.add.collider(this.player, movers, (pl, mp)=>{
+    // place player on top: mimic friction carry
+    if(pl.body.touching.down && mp.body.touching.up){
+      pl.x += (mp.body.velocity.x * this.game.loop.delta)/1000;
+    }
+  });
+  this.physics.add.collider(enemies, movers);
+
+  // overlaps
+  this.physics.add.overlap(this.player, coins, (_,coin)=>{
+    coin.disableBody(true,true);
+    if(coins.countActive(true)===0){
+      doorSprite.setTexture('doorOpen');
+      this.info.setText('Door opened! Reach the exit ▶');
+      this.doorOpen = true;
+    }
+  });
+  const die = ()=> this.respawn();
+  this.physics.add.overlap(this.player, enemies, die);
+  this.physics.add.overlap(this.player, spikes, die);
+  this.physics.add.overlap(this.player, lava, die);
+
+  this.physics.add.overlap(this.player, checkpoints, (pl,flag)=>{
+    if(flag.texture.key==='flagOff'){
+      flag.setTexture('flagOn');
+      this.spawnPoint = {x: flag.x, y: flag.y-4};
+      this.info.setText('Checkpoint reached!');
+    }
+  });
+
+  this.physics.add.overlap(this.player, doorSprite, ()=>{
+    if(!this.doorOpen) return;
+    this.finishLevel();
+  });
+
+  // initial state
+  this.doorOpen = (coins.countActive(true)===0);
+  this.coinsGroup = coins;
+
+  // update loop hooks
+  this.events.on('update', ()=>{
+    // timer
+    const t = performance.now() - this.timeStart;
+    this.timerText.setText(formatMs(t));
+    // enemy bounce on edges/platforms
+    enemies.children.iterate(m=>{
+      if(!m) return;
+      // reverse if horizontal velocity stalls
+      if(Math.abs(m.body.velocity.x) < 5){
+        m.setVelocityX((Math.random()<.5?-1:1)*100);
+      }
+    });
+    // mover patrol bounds
+    movers.children.iterate(mp=>{
+      if(!mp) return;
+      if(mp.x < mp.data.min){ mp.setVelocityX(Math.abs(mp.data.vx)); }
+      if(mp.x > mp.data.max){ mp.setVelocityX(-Math.abs(mp.data.vx)); }
+    });
+  });
+};
+
+GameScene.prototype.update = function(){
+  const p=this.player; if(!p) return;
+  const speed=220, jump=420;
+
+  p.setVelocityX(0);
+  if(this.cursors.left.isDown){ p.setVelocityX(-speed); p.flipX=true; }
+  else if(this.cursors.right.isDown){ p.setVelocityX(speed); p.flipX=false; }
+
+  if(Phaser.Input.Keyboard.JustDown(this.cursors.up) || Phaser.Input.Keyboard.JustDown(this.cursors.space)){
+    if(p.body.blocked.down) p.setVelocityY(-jump);
+  }
+};
+
+GameScene.prototype.respawn = function(){
+  this.cameras.main.shake(150,0.01);
+  this.player.setVelocity(0,0);
+  this.player.setPosition(this.spawnPoint.x, this.spawnPoint.y);
+  this.info.setText('Ouch! Respawned at checkpoint.');
+};
+
+GameScene.prototype.finishLevel = function(){
+  const t = performance.now() - this.timeStart;
+  // save best time & unlock next
+  const prog = getProgress();
+  const idx = this.levelIndex;
+  prog.best = prog.best || {};
+  const prev = prog.best[idx];
+  if(!prev || t < prev) prog.best[idx] = Math.round(t);
+  if(idx < LEVELS.length-1) prog.unlocked = Math.max(prog.unlocked||1, idx+2);
+  else prog.unlocked = LEVELS.length;
+  setProgress(prog);
+
+  if(idx < LEVELS.length-1){
+    this.levelIndex++;
+    this.createLevel(this.levelIndex);
+  }else{
+    this.children.removeAll(true);
+    this.add.rectangle(W/2,H/2,W,H,0x101317);
+    this.add.text(W/2,H/2-20,'🎉 You finished all levels!',{font:'22px system-ui', fill:'#fff'}).setOrigin(0.5);
+    this.add.text(W/2,H/2+16,`Best total time: ${sumBest(prog.best)}`,{font:'14px system-ui', fill:'#9aa'}).setOrigin(0.5);
+    this.add.text(W/2,H/2+44,'Press M for menu or R to replay.',{font:'14px system-ui', fill:'#9aa'}).setOrigin(0.5);
+  }
+};
+
+/* =====================  Helpers  ================================= */
+function formatMs(ms){
+  const m = Math.floor(ms/60000);
+  const s = Math.floor((ms%60000)/1000);
+  const ms3 = Math.floor(ms%1000).toString().padStart(3,'0');
+  return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}.${ms3}`;
+}
+function sumBest(best){
+  let total=0;
+  for(let i=0;i<LEVELS.length;i++) if(best[i]) total+=best[i];
+  return total?formatMs(total):'—';
+}
+</script>
+</body>
+</html>
